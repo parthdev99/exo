@@ -120,6 +120,10 @@ def remap_messages(messages: List[Message]) -> List[Message]:
 
 
 def build_prompt(tokenizer, _messages: List[Message]):
+  # Ensure Llama 3 chat template is set
+  if not hasattr(tokenizer, 'chat_template') or not tokenizer.chat_template:
+    if "llama-3" in tokenizer.name_or_path.lower() or "llama3" in tokenizer.name_or_path.lower():
+      tokenizer.chat_template = "{% if messages[0]['role'] == 'system' %}{% set loop_messages = messages[1:] %}{% set system_message = messages[0]['content'] %}{% else %}{% set loop_messages = messages %}{% set system_message = '' %}{% endif %}{% for message in loop_messages %}{% if message['role'] == 'user' %}{{ '<|start_header_id|>user<|end_header_id|>\n\n' + message['content'] + '<|eot_id|>' }}{% elif message['role'] == 'assistant' %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' + message['content'] + '<|eot_id|>' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ '<|start_header_id|>assistant<|end_header_id|>\n\n' }}{% endif %}"
   messages = remap_messages(_messages)
   prompt = tokenizer.apply_chat_template([m.to_dict() for m in messages], tokenize=False, add_generation_prompt=True)
   for message in messages:
