@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 from typing import Callable, TypeVar, Optional, Dict, Generic, Tuple, List
 import socket
@@ -221,7 +222,7 @@ def pretty_print_bytes_per_second(bytes_per_second: int) -> str:
     return f"{bytes_per_second / (1024 ** 4):.2f} TB/s"
 
 
-def get_all_ip_addresses():
+def get_all_ip_addresses_and_interfaces():
   try:
     ip_addresses = []
     for interface in netifaces.interfaces():
@@ -229,8 +230,95 @@ def get_all_ip_addresses():
       if netifaces.AF_INET in ifaddresses:
         for link in ifaddresses[netifaces.AF_INET]:
           ip = link['addr']
-          ip_addresses.append(ip)
+          ip_addresses.append((ip, interface))
     return list(set(ip_addresses))
   except:
     if DEBUG >= 1: print("Failed to get all IP addresses. Defaulting to localhost.")
-    return ["localhost"]
+    return [("localhost", "lo")]
+
+async def get_macos_interface_type(ifname: str) -> Optional[Tuple[int, str]]:
+  try:
+    proc = await asyncio.create_subprocess_exec('networksetup', '-listallhardwareports',
+      stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    output, _ = await proc.communicate()
+    output = output.decode('utf-8')
+
+    # Parse the output into blocks
+    blocks = output.split('\n\n')
+    for block in blocks:
+      lines = block.strip().split('\n')
+      if len(lines) < 2:
+        continue
+
+      # Get the Hardware Port and Device lines
+      hw_port = lines[0].split(': ', 1)[1] if ': ' in lines[0] else ''
+      device = lines[1].split(': ', 1)[1] if ': ' in lines[1] else ''
+
+      if device == ifname:
+        # Thunderbolt interfaces
+        if 'Thunderbolt' in hw_port:
+          return (5, "Thunderbolt/10GbE")
+
+        # Ethernet adapters
+        if 'Ethernet' in hw_port:
+          return (4, "Ethernet")
+
+        # WiFi
+        if hw_port == 'Wi-Fi':
+          return (3, "WiFi")
+
+  except Exception as e:
+    if DEBUG >= 2: print(f"Error detecting macOS interface type: {e}")
+
+  return None
+
+async def get_interface_priority_and_type(ifname: str) -> Tuple[int, str]:
+  # Local container/virtual interfaces
+  if (ifname.startswith(('docker', 'br-', 'veth', 'cni', 'flannel', 'calico', 'weave')) or
+    'bridge' in ifname):
+    return (7, "Container Virtual")
+
+  # Loopback interface
+  if ifname.startswith('lo'):
+    return (6, "Loopback")
+
+  # On macOS, try to get interface type using networksetup
+  if psutil.MACOS:
+    macos_type = await get_macos_interface_type(ifname)
+    if macos_type is not None: return macos_type
+
+  # Traditional detection for non-macOS systems or fallback
+  if ifname.startswith(('tb', 'nx', 'ten')):
+    return (5, "Thunderbolt/10GbE")
+
+  # Regular ethernet detection
+  if ifname.startswith(('eth', 'en')) and not ifname.startswith(('en1', 'en0')):
+    return (4, "Ethernet")
+
+  # WiFi detection
+  if ifname.startswith(('wlan', 'wifi', 'wl')) or ifname in ['en0', 'en1']:
+    return (3, "WiFi")
+
+  # Non-local virtual interfaces (VPNs, tunnels)
+  if ifname.startswith(('tun', 'tap', 'vtun', 'utun', 'gif', 'stf', 'awdl', 'llw')):
+    return (1, "External Virtual")
+
+  # Other physical interfaces
+  return (2, "Other")
+
+async def shutdown(signal, loop, server):
+  """Gracefully shutdown the server and close the asyncio loop."""
+  print(f"Received exit signal {signal.name}...")
+  print("Thank you for using exo.")
+  print_yellow_exo()
+  server_tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+  [task.cancel() for task in server_tasks]
+  print(f"Cancelling {len(server_tasks)} outstanding tasks")
+  await asyncio.gather(*server_tasks, return_exceptions=True)
+  await server.stop()
+
+
+def is_frozen():
+  return getattr(sys, 'frozen', False) or os.path.basename(sys.executable) == "exo" \
+    or ('Contents/MacOS' in str(os.path.dirname(sys.executable))) \
+    or '__nuitka__' in globals() or getattr(sys, '__compiled__', False)
