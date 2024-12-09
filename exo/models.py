@@ -14,14 +14,14 @@ model_cards = {
     "layers": 16,
     "repo": {
       "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-1B-Instruct-4bit",
-      "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-1B-Instruct",
+      "TinygradDynamicShardInferenceEngine": "meta-llama/Llama-3.2-1B",
     },
   },
   "llama-3.2-3b": {
     "layers": 28,
     "repo": {
        "MLXDynamicShardInferenceEngine": "mlx-community/Llama-3.2-3B-Instruct-4bit",
-       "TinygradDynamicShardInferenceEngine": "unsloth/Llama-3.2-3B-Instruct",
+       "TinygradDynamicShardInferenceEngine": "meta-llama/Llama-3.2-3B",
     },
   },
   "llama-3.1-8b": {
