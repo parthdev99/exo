@@ -12,7 +12,7 @@ install_requires = [
   "grpcio-tools==1.68.0",
   "Jinja2==3.1.4",
   "netifaces==0.11.0",
-  "numpy==2.0.0",
+  "numpy",
   "nuitka==2.5.1",
   "nvidia-ml-py==12.560.30",
   "opencv-python==4.10.0.84",
@@ -27,7 +27,7 @@ install_requires = [
   "tqdm==4.66.4",
   "transformers==4.46.3",
   "uuid==1.30",
-  "tinygrad @ git+https://github.com/tinygrad/tinygrad.git@3b26e51fcebfc6576f4e0f99693e6f1406d61d79",
+  #"tinygrad @ git+https://github.com/tinygrad/tinygrad.git@3b26e51fcebfc6576f4e0f99693e6f1406d61d79",
 ]
 
 extras_require = {
