@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Set
 import numpy as np
 from exo.inference.shard import Shard
 from exo.topology.device_capabilities import DeviceCapabilities
@@ -56,5 +56,5 @@ class PeerHandle(ABC):
     pass
 
   @abstractmethod
-  async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
+  async def collect_topology(self, visited: Set[str], max_depth: int) -> Topology:
     pass
