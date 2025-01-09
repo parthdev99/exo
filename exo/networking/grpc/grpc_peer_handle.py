@@ -1,7 +1,7 @@
 import grpc
 import numpy as np
 import asyncio
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Set
 
 from . import node_service_pb2
 from . import node_service_pb2_grpc
@@ -117,7 +117,7 @@ class GRPCPeerHandle(PeerHandle):
       response.is_finished,
     )
 
-  async def collect_topology(self, visited: set[str], max_depth: int) -> Topology:
+  async def collect_topology(self, visited: Set[str], max_depth: int) -> Topology:
     request = node_service_pb2.CollectTopologyRequest(visited=visited, max_depth=max_depth)
     response = await self.stub.CollectTopology(request)
     topology = Topology()
