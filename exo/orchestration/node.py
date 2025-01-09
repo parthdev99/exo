@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Set
 import numpy as np
 from abc import ABC, abstractmethod
 from exo.helpers import AsyncCallbackSystem
@@ -28,7 +28,7 @@ class Node(ABC):
     pass
 
   @abstractmethod
-  async def collect_topology(self, visited: set[str] = set(), max_depth: int = 2) -> Topology:
+  async def collect_topology(self, visited: Set[str] = set(), max_depth: int = 2) -> Topology:
     pass
 
   @property
