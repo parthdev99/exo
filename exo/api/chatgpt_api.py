@@ -322,9 +322,6 @@ class ChatGPTAPI:
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
     if DEBUG >= 2: print(f"Resolved tokenizer: {tokenizer}")
 
-    if self.system_prompt and not any(msg.role == "system" for msg in chat_request.messages):
-      chat_request.messages.insert(0, Message("system", self.system_prompt))
-
     prompt = build_prompt(tokenizer, chat_request.messages, chat_request.tools)
     request_id = str(uuid.uuid4())
     if self.on_chat_completion_request:
