@@ -301,11 +301,16 @@ class ChatGPTAPI:
     if DEBUG >= 2: print(f"Handling chat completions request from {request.remote}: {data}")
     stream = data.get("stream", False)
     chat_request = parse_chat_request(data, self.default_model)
-    if chat_request.model and chat_request.model.startswith("gpt-"):  # to be compatible with ChatGPT tools, point all gpt- model requests to default model
+    
+    # Extract max_tokens from the request, default to None if not specified
+    max_tokens = data.get("max_tokens", None)
+    
+    if chat_request.model and chat_request.model.startswith("gpt-"):
       chat_request.model = self.default_model
     if not chat_request.model or chat_request.model not in model_cards:
       if DEBUG >= 1: print(f"Invalid model: {chat_request.model}. Supported: {list(model_cards.keys())}. Defaulting to {self.default_model}")
       chat_request.model = self.default_model
+      
     shard = build_base_shard(chat_request.model, self.inference_engine_classname)
     if not shard:
       supported_models = [model for model, info in model_cards.items() if self.inference_engine_classname in info.get("repo", {})]
@@ -315,35 +320,26 @@ class ChatGPTAPI:
       )
 
     tokenizer = await resolve_tokenizer(get_repo(shard.model_id, self.inference_engine_classname))
-    if DEBUG >= 4: print(f"Resolved tokenizer: {tokenizer}")
+    if DEBUG >= 2: print(f"Resolved tokenizer: {tokenizer}")
 
-    prompt = build_prompt(tokenizer, chat_request.messages)
+    if self.system_prompt and not any(msg.role == "system" for msg in chat_request.messages):
+      chat_request.messages.insert(0, Message("system", self.system_prompt))
+
+    prompt = build_prompt(tokenizer, chat_request.messages, chat_request.tools)
     request_id = str(uuid.uuid4())
     if self.on_chat_completion_request:
       try:
         self.on_chat_completion_request(request_id, chat_request, prompt)
       except Exception as e:
         if DEBUG >= 2: traceback.print_exc()
-    # request_id = None
-    # match = self.prompts.find_longest_prefix(prompt)
-    # if match and len(prompt) > len(match[1].prompt):
-    #     if DEBUG >= 2:
-    #       print(f"Prompt for request starts with previous prompt {len(match[1].prompt)} of {len(prompt)}: {match[1].prompt}")
-    #     request_id = match[1].request_id
-    #     self.prompts.add(prompt, PromptSession(request_id=request_id, timestamp=int(time.time()), prompt=prompt))
-    #     # remove the matching prefix from the prompt
-    #     prompt = prompt[len(match[1].prompt):]
-    # else:
-    #   request_id = str(uuid.uuid4())
-    #   self.prompts.add(prompt, PromptSession(request_id=request_id, timestamp=int(time.time()), prompt=prompt))
 
     callback_id = f"chatgpt-api-wait-response-{request_id}"
     callback = self.node.on_token.register(callback_id)
 
-    if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=}")
+    if DEBUG >= 2: print(f"Sending prompt from ChatGPT api {request_id=} {shard=} {prompt=} {max_tokens=}")
 
     try:
-      await asyncio.wait_for(asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, request_id=request_id))), timeout=self.response_timeout)
+      await asyncio.wait_for(asyncio.shield(asyncio.create_task(self.node.process_prompt(shard, prompt, request_id=request_id, max_tokens=max_tokens))), timeout=self.response_timeout)
 
       if DEBUG >= 2: print(f"Waiting for response to finish. timeout={self.response_timeout}s")
 
@@ -365,11 +361,18 @@ class ChatGPTAPI:
           finish_reason = None
           eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if hasattr(tokenizer, "_tokenizer") and isinstance(tokenizer._tokenizer,
                                                                                                                              AutoTokenizer) else getattr(tokenizer, "eos_token_id", None)
-          if len(new_tokens) > 0 and new_tokens[-1] == eos_token_id:
+          
+          # Check if we've hit max_tokens
+          if max_tokens and len(tokens) >= max_tokens:
+            if is_finished:
+              finish_reason = "length"
+            # Truncate tokens to max_tokens
+            new_tokens = new_tokens[:max_tokens - prev_last_tokens_len]
+          elif len(new_tokens) > 0 and new_tokens[-1] == eos_token_id:
             new_tokens = new_tokens[:-1]
             if is_finished:
               finish_reason = "stop"
-          if is_finished and not finish_reason:
+          elif is_finished and not finish_reason:
             finish_reason = "length"
 
           completion = generate_completion(
@@ -390,12 +393,16 @@ class ChatGPTAPI:
             if DEBUG >= 2: traceback.print_exc()
 
         def on_result(_request_id: str, tokens: List[int], is_finished: bool):
-          if _request_id == request_id: self.stream_tasks[_request_id] = asyncio.create_task(stream_result(_request_id, tokens, is_finished))
+          if _request_id == request_id: 
+            # Check if we've hit max_tokens
+            if max_tokens and len(tokens) >= max_tokens:
+              is_finished = True
+            self.stream_tasks[_request_id] = asyncio.create_task(stream_result(_request_id, tokens, is_finished))
 
           return _request_id == request_id and is_finished
 
         _, tokens, _ = await callback.wait(on_result, timeout=self.response_timeout)
-        if request_id in self.stream_tasks:  # in case there is still a stream task running, wait for it to complete
+        if request_id in self.stream_tasks:
           if DEBUG >= 2: print("Pending stream task. Waiting for stream task to complete.")
           try:
             await asyncio.wait_for(self.stream_tasks[request_id], timeout=30)
@@ -411,8 +418,12 @@ class ChatGPTAPI:
 
         finish_reason = "length"
         eos_token_id = tokenizer.special_tokens_map.get("eos_token_id") if isinstance(getattr(tokenizer, "_tokenizer", None), AutoTokenizer) else tokenizer.eos_token_id
-        if DEBUG >= 2: print(f"Checking if end of tokens result {tokens[-1]=} is {eos_token_id=}")
-        if tokens[-1] == eos_token_id:
+        
+        # Check for max_tokens before processing EOS token
+        if max_tokens and len(tokens) > max_tokens:
+          tokens = tokens[:max_tokens]
+          finish_reason = "length"
+        elif tokens[-1] == eos_token_id:
           tokens = tokens[:-1]
           finish_reason = "stop"
 
@@ -425,7 +436,7 @@ class ChatGPTAPI:
     finally:
       deregistered_callback = self.node.on_token.deregister(callback_id)
       if DEBUG >= 2: print(f"Deregister {callback_id=} {deregistered_callback=}")
-
+        
   async def handle_delete_model(self, request):
     try:
       model_name = request.match_info.get('model_name')
